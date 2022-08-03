@@ -6,6 +6,7 @@ public class CharacterController : MonoBehaviour
 {
     [Header("References")]
     public Renderer playerRenderer;
+    public Transform playerCamera;
 
     [Header("Gravity Force")]
     public float gravityForce = 9.8f;
@@ -27,9 +28,15 @@ public class CharacterController : MonoBehaviour
     private Rigidbody playerRb;
     private CapsuleCollider playerCollider;
 
+    private Vector3 rendererTargetScale;
+    private Quaternion rendererTargetRotation;
+
+    private bool grounded;
+
     // Start is called before the first frame update
     void Start()
     {
+        grounded = false;
         playerRb = GetComponent<Rigidbody>();
         playerCollider = GetComponent<CapsuleCollider>();
     }
@@ -37,25 +44,27 @@ public class CharacterController : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if (Input.GetButtonDown("Jump"))
+        if (grounded && Input.GetButtonDown("Jump"))
         {
+            grounded = false;
             playerRb.AddForce(jumpForce * Vector3.up, ForceMode.Impulse);
         }
     }
 
     private void FixedUpdate()
     {
-        if (GetGroundInfo(out float distanceToTheGround))
+        grounded = GetGroundInfo(out float distanceToGround);
+        if (grounded)
         {
             // Gravity
             float gravityFactor = 1.0f; // gravity factor goes from 0 to 1 when character is above rideHeight
-            if (distanceToTheGround <= targetRideHeight)
+            if (distanceToGround <= targetRideHeight)
             {
                 gravityFactor = 0;
             }
-            else if (distanceToTheGround <= floorDistanceWhereGravityStartsToSlowDown)
+            else if (distanceToGround <= floorDistanceWhereGravityStartsToSlowDown)
             {
-                gravityFactor = (distanceToTheGround - targetRideHeight) / (floorDistanceWhereGravityStartsToSlowDown - targetRideHeight);
+                gravityFactor = (distanceToGround - targetRideHeight) / (floorDistanceWhereGravityStartsToSlowDown - targetRideHeight);
             }
             gravityFactor = Mathf.Clamp(gravityFactor, 0, 1);
             gravityFactor = gravityCurve.Evaluate(gravityFactor);
@@ -63,13 +72,13 @@ public class CharacterController : MonoBehaviour
 
             // "Spring" to keep character above the ground
             float springFactor = 0.0f; // spring factor is 1 when character touches the ground, and is zero when character is exactly at rideHeight
-            if (distanceToTheGround <= floorDistanceWhereSpringForceIsMaximal)
+            if (distanceToGround <= floorDistanceWhereSpringForceIsMaximal)
             {
                 springFactor = 1.0f;
             }
-            else if (distanceToTheGround < targetRideHeight)
+            else if (distanceToGround < targetRideHeight)
             {
-                springFactor = (targetRideHeight - distanceToTheGround) / (targetRideHeight - floorDistanceWhereSpringForceIsMaximal);
+                springFactor = (targetRideHeight - distanceToGround) / (targetRideHeight - floorDistanceWhereSpringForceIsMaximal);
             }
             springFactor = Mathf.Clamp(springFactor, 0, 1);
             springFactor = springCurve.Evaluate(springFactor);
@@ -85,25 +94,30 @@ public class CharacterController : MonoBehaviour
         // Horizontal movement
         float horizontalInput = Input.GetAxis("Horizontal");
         float verticalInput = Input.GetAxis("Vertical");
-        playerRb.AddForce(moveSpeed * horizontalInput * Vector3.right);
-        playerRb.AddForce(moveSpeed * verticalInput * Vector3.forward);
-        playerRenderer.transform.localRotation = Quaternion.Euler(20*verticalInput, 0, -20*horizontalInput);
-    }
+        playerRb.AddForce(moveSpeed * horizontalInput * playerCamera.right);
+        playerRb.AddForce(moveSpeed * verticalInput * playerCamera.forward);
 
-    private void LateUpdate()
-    {
-        if (GetGroundInfo(out float distanceToGround))
+        // Set new target renderer rotation and scale
+        rendererTargetRotation = Quaternion.Euler(20*verticalInput, playerCamera.localRotation.eulerAngles.y, -20*horizontalInput);
+        if (grounded)
         {
             float distanceToGroundFactor = distanceToGround / 3.0f;
             float yScale = 1 + (distanceToGroundFactor - targetRideHeight);
             yScale = Mathf.Clamp(yScale, 0.6f, 1.4f);
             float horizontalScale = 1 - (yScale - 1);
-            playerRenderer.transform.localScale = new Vector3(horizontalScale, yScale, horizontalScale);
+            rendererTargetScale = new Vector3(horizontalScale, yScale, horizontalScale);
         }
         else
         {
-            playerRenderer.transform.localScale = Vector3.one;
+            rendererTargetScale = Vector3.one;
         }
+    }
+
+    private void LateUpdate()
+    {
+        // set renderer actual rotation and scale
+        playerRenderer.transform.localScale = Vector3.Lerp(playerRenderer.transform.localScale, rendererTargetScale, 0.1f);
+        playerRenderer.transform.localRotation = Quaternion.Lerp(playerRenderer.transform.localRotation, rendererTargetRotation, 0.1f);
     }
 
     private bool GetGroundInfo(out float distance)
@@ -111,14 +125,15 @@ public class CharacterController : MonoBehaviour
         bool isGround = false;
         distance = 0;
         float distanceToTheGround = -1; // no ground
-        float sphereRadius = playerCollider.radius;
-        if (Physics.SphereCast(this.transform.position, sphereRadius, -groundCheckDistance * Vector3.up, out RaycastHit hit))
+        float sphereRadius = playerCollider.radius * 0.5f;
+        if (Physics.SphereCast(this.transform.position, sphereRadius, -groundCheckDistance * Vector3.up, out RaycastHit hit, groundCheckDistance))
         {
             // found the ground!
             distance = hit.distance - (playerCollider.height / 2.0f);
             DebugMessageWithTimestamp("Raycast hit with distance to the ground = " + distanceToTheGround);
             isGround = true;
         }
+        Debug.Log("grounded = " + grounded);
         return isGround;
     }
 
